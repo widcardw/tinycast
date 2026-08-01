@@ -194,6 +194,13 @@ or `tinycast@beta`) in the
 `HOMEBREW_TAP_TOKEN` repo secret — a fine-grained PAT with **Contents: read/write** on the tap
 repo. Without the secret the step logs a warning and skips (the release still publishes).
 
+### macOS 15 (Sequoia) channel
+
+`main` targets macOS 26. The Sequoia build ships from a patch-based `compat/macos15` branch,
+released entirely from a **local CLI** (`./compat/release.sh` — sync, verify, tag, push in one
+command) and triggered by a `v*-sequoia` tag, not the Actions button. Full walkthrough in
+[macos15.md](macos15.md) (中文); the branch-local reference is `compat/README.md`.
+
 ## Website
 
 `.github/workflows/website.yml` builds `website/` (Vite + React + TS) and deploys it to GitHub

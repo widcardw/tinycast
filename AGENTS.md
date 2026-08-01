@@ -163,4 +163,6 @@ Never break these without an explicit task to do so.
   [`docs/hotkeys.md`](docs/hotkeys.md) — subsystem internals.
 - [`docs/ui.md`](docs/ui.md) — the full visual design system, tokens, scrollbars, section headers.
 - [`docs/development.md`](docs/development.md) — build, test, package, release.
+- [`docs/macos15.md`](docs/macos15.md) — the macOS 15 (Sequoia) channel: patch-based
+  `compat/macos15` branch, local-CLI release (`compat/release.sh`), tag-triggered CI.
 - [`docs/signing.md`](docs/signing.md) — signing model and Gatekeeper.
