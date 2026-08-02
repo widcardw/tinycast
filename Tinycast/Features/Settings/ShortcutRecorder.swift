@@ -127,8 +127,7 @@ private final class CaptureSession: ObservableObject {
         // The handlers run on the main thread but AppKit predates actor annotations, hence assumeIsolated; only Sendable event pieces (key code, flags) cross in.
         if let monitor = NSEvent.addLocalMonitorForEvents(
             matching: .keyDown,
-            handler: {
-                [weak self, weak hotKeys] event in
+            handler: { [weak self, weak hotKeys] event in
                 let keyCode = Int(event.keyCode)
                 let flags = event.modifierFlags
                 MainActor.assumeIsolated {
@@ -137,20 +136,17 @@ private final class CaptureSession: ObservableObject {
                         keyCode: keyCode, flags: flags, action: action, hotKeys: hotKeys)
                 }
                 return nil  // always consume: no beeps, no leaking keys to the window
-            })
-        {
+            }) {
             monitors.append(monitor)
         }
 
         if let monitor = NSEvent.addLocalMonitorForEvents(
             matching: .flagsChanged,
-            handler: {
-                [weak self] event in
+            handler: { [weak self] event in
                 let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
                 MainActor.assumeIsolated { self?.heldModifiers = flags }
                 return event
-            })
-        {
+            }) {
             monitors.append(monitor)
         }
 
@@ -160,8 +156,7 @@ private final class CaptureSession: ObservableObject {
             handler: { [weak hotKeys] event in
                 MainActor.assumeIsolated { hotKeys?.recordingAction = nil }
                 return event
-            })
-        {
+            }) {
             monitors.append(monitor)
         }
 
@@ -189,7 +184,7 @@ private final class CaptureSession: ObservableObject {
     private func handleKeyDown(
         keyCode: Int, flags: NSEvent.ModifierFlags, action: HotKeyAction, hotKeys: HotKeyManager
     ) {
-        let bareKey = flags.intersection([.command, .option, .control, .shift]).isEmpty
+        let bareKey = flags.isDisjoint(with: [.command, .option, .control, .shift])
 
         if bareKey, keyCode == kVK_Escape {
             hotKeys.recordingAction = nil

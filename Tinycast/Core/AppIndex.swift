@@ -6,6 +6,10 @@ struct AppEntry: Identifiable, Hashable, Sendable {
         case application
         case systemSettings
         case command
+        case customCommand
+        case snippet
+        case systemAction
+        case windowCommand
     }
 
     let id: String  // file path (or "command:…" id) — always unique
@@ -13,6 +17,8 @@ struct AppEntry: Identifiable, Hashable, Sendable {
     let url: URL
     let bundleID: String?
     let kind: Kind
+    /// Extra strings this entry also matches on in search — a snippet's keyword. Empty for every other kind.
+    var matchAliases: [String] = []
 
     /// Stable identity for learned ranking, favorites, and other per-entry preferences.
     var preferenceKey: String { bundleID ?? id }
@@ -21,8 +27,11 @@ struct AppEntry: Identifiable, Hashable, Sendable {
         switch kind {
         case .application: return "Application"
         case .systemSettings: return "System Setting"
-        case .command:
-            return CustomCommand.id(fromEntryID: id) == nil ? "Command" : "Custom Command"
+        case .command: return "Command"
+        case .customCommand: return "Custom Command"
+        case .snippet: return "Snippet"
+        case .systemAction: return "System Action"
+        case .windowCommand: return "Window Command"
         }
     }
 
@@ -33,19 +42,33 @@ struct AppEntry: Identifiable, Hashable, Sendable {
             return bundleID.map { .app(bundleID: $0) }
         case .systemSettings:
             return bundleID.map { .settingsPane(bundleID: $0) }
-        case .command:
+        case .customCommand:
             return CustomCommand.id(fromEntryID: id).map { .customCommand(id: $0) }
+        case .systemAction:
+            return SystemActionCatalog.action(forEntryID: id).map { .systemAction(id: $0.id) }
+        case .windowCommand:
+            return WindowCommandCatalog.command(forEntryID: id).map { .windowCommand(id: $0.id) }
+        case .command, .snippet:
+            return nil
         }
     }
 
-    /// Command entries are synthetic — no file behind them to reveal.
-    var canRevealInFinder: Bool { kind != .command }
+    /// Synthetic command entries have no file behind them to reveal.
+    var canRevealInFinder: Bool { kind == .application || kind == .systemSettings || kind == .snippet }
 
-    /// Command entries draw an SF Symbol tile; everything else uses its file icon.
-    var isSymbolIcon: Bool { kind == .command }
+    /// Synthetic entries draw an SF Symbol tile; everything else uses its file icon.
+    var isSymbolIcon: Bool { kind != .application && kind != .systemSettings }
+
     var symbolIconName: String {
-        if let builtIn = CommandRegistry.command(for: self) { return builtIn.sfSymbol }
-        return CustomCommand.id(fromEntryID: id) == nil ? "questionmark" : "terminal"
+        switch kind {
+        case .snippet: return "text.quote"
+        case .customCommand: return CustomCommand.sfSymbol
+        case .command: return CommandRegistry.command(for: self)?.sfSymbol ?? "questionmark"
+        case .systemAction: return SystemActionCatalog.action(forEntryID: id)?.sfSymbol ?? "questionmark"
+        case .windowCommand:
+            return WindowCommandCatalog.command(forEntryID: id)?.sfSymbol ?? "questionmark"
+        case .application, .systemSettings: return "questionmark"
+        }
     }
 
     var icon: NSImage {
@@ -112,11 +135,7 @@ enum IconCache {
             NSColor.white.withAlphaComponent(0.09).setFill()
             NSBezierPath(roundedRect: tile, xRadius: 9, yRadius: 9).fill()
 
-            let config = NSImage.SymbolConfiguration(pointSize: 21, weight: .medium)
-                .applying(.init(paletteColors: [.white.withAlphaComponent(0.85)]))
-            guard
-                let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-                    .withSymbolConfiguration(config)
+            guard let symbol = glyph(named: name, tint: .white.withAlphaComponent(0.85))
             else { return true }
             let size = symbol.size
             symbol.draw(
@@ -128,6 +147,25 @@ enum IconCache {
         let (icon, cost) = downsampled(image)
         cache.setObject(icon, forKey: key, cost: cost)
         return icon
+    }
+
+    /// Most tiles draw an SF Symbol, pre-tinted via `SymbolConfiguration`; names SF Symbols lacks (Bluetooth, a SIG trademark) fall back to a template asset tinted by compositing.
+    private static func glyph(named name: String, tint: NSColor) -> NSImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: 21, weight: .medium)
+            .applying(.init(paletteColors: [tint]))
+        if let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(config) {
+            return symbol
+        }
+        guard let asset = NSImage(named: name) else { return nil }
+        // A 24pt box lands the asset's ink at the ~22pt optical height the SF Symbols above draw at pointSize 21.
+        let assetSize = NSSize(width: 24, height: 24)
+        return NSImage(size: assetSize, flipped: false) { rect in
+            asset.draw(in: rect)
+            tint.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
     }
 
     /// Rasterize the multi-rep workspace icon into one `displayPixel`-square bitmap, returning it and its decoded byte cost.
@@ -162,11 +200,38 @@ enum IconCache {
 final class AppIndex: ObservableObject {
     @Published private(set) var apps: [AppEntry] = []
 
+    private var snippetEntries: [AppEntry] = []
+
+    private struct MatchCache {
+        let query: String
+        let rankingRevision: Int
+        let result: [AppEntry]
+    }
+
     /// One-entry memo so repeated renders for the same query reuse the ranking instead of re-matching every frame.
-    private var matchCache: (query: String, rankingRevision: Int, result: [AppEntry])?
+    private var matchCache: MatchCache?
+
+    private static let systemActionEntries: [AppEntry] = SystemActionCatalog.all
+        .map { command in
+            AppEntry(
+                id: command.entryID, name: command.name,
+                url: URL(string: "tinycast://system-action/" + command.id.rawValue)!,
+                bundleID: nil, kind: .systemAction)
+        }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+    private static let allWindowCommandEntries: [AppEntry] = WindowCommandCatalog.all
+        .map { command in
+            AppEntry(
+                id: command.entryID, name: command.name,
+                url: URL(string: "tinycast://window-command/" + command.id.rawValue)!,
+                bundleID: nil, kind: .windowCommand)
+        }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
     private var discoveredEntries: [AppEntry] = []
     private var customCommandEntries: [AppEntry] = []
+    private var windowCommandEntries: [AppEntry] = []
     private var isRefreshing = false
     /// Set when a refresh is requested mid-scan, so a scope edit landing during an in-flight scan isn't silently dropped.
     private var refreshPending = false
@@ -184,11 +249,38 @@ final class AppIndex: ObservableObject {
             AppEntry(
                 id: command.entryID, name: command.name,
                 url: URL(string: "tinycast://custom-command/" + command.id.uuidString)!,
-                bundleID: nil, kind: .command)
+                bundleID: nil, kind: .customCommand)
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         guard entries != customCommandEntries else { return }
         customCommandEntries = entries
+        publishEntries()
+    }
+
+    /// Shows or hides the whole window-command slice; the catalog is static, so this is the on/off switch
+    /// rather than a content update.
+    func setWindowCommandsVisible(_ visible: Bool) {
+        let entries = visible ? Self.allWindowCommandEntries : []
+        guard entries != windowCommandEntries else { return }
+        windowCommandEntries = entries
+        publishEntries()
+    }
+
+    func updateSnippets(_ records: [StoredSnippet]) {
+        let entries = records
+            .filter { $0.snippet.isEnabled }
+            .map { record in
+                AppEntry(
+                    id: "snippet:\(record.id)",
+                    name: record.snippet.name,
+                    url: record.fileURL,
+                    bundleID: nil,
+                    kind: .snippet,
+                    matchAliases: [record.snippet.keyword].compactMap { $0 })
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        guard entries != snippetEntries else { return }
+        snippetEntries = entries
         publishEntries()
     }
 
@@ -244,7 +336,7 @@ final class AppIndex: ObservableObject {
                     id: url.path, name: name, url: url, bundleID: bundleID,
                     kind: .application))
         }
-        // `publishEntries` appends commands after apps and Settings panes so the sectioned flat selection maps 1:1 onto rows.
+        // `publishEntries` appends snippets, custom commands and built-in commands after apps and Settings panes so the sectioned flat selection maps 1:1 onto rows.
         let apps = result.sorted {
             $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }
@@ -252,10 +344,10 @@ final class AppIndex: ObservableObject {
     }
 
     private func publishEntries() {
-        let commands = (CommandRegistry.all + customCommandEntries).sorted {
-            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-        }
-        let updated = discoveredEntries + commands
+        // Each slice is already alphabetical; the slice order is the launcher's section order (LauncherList mirrors it), so custom commands sit in their own section ahead of the built-ins.
+        let updated =
+            discoveredEntries + snippetEntries + Self.systemActionEntries + windowCommandEntries
+            + customCommandEntries + CommandRegistry.all
         guard updated != apps else { return }
         apps = updated
         matchCache = nil
@@ -266,19 +358,24 @@ final class AppIndex: ObservableObject {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return apps }
         if let matchCache, matchCache.query == q,
-            matchCache.rankingRevision == ranking.revision
-        {
+            matchCache.rankingRevision == ranking.revision {
             return matchCache.result
         }
         let result = rank(q, limit: limit)
-        matchCache = (q, ranking.revision, result)
+        matchCache = MatchCache(query: q, rankingRevision: ranking.revision, result: result)
         return result
     }
 
     private func rank(_ q: String, limit: Int) -> [AppEntry] {
         let learned = ranking.boosts(query: q)
         let scored = apps.compactMap { app -> (AppEntry, Int)? in
-            guard let score = FuzzyMatch.score(query: q, candidate: app.name) else { return nil }
+            // An entry matches on its name or on any alias it carries (a snippet's keyword), whichever scores best — all inside the same tiers, so an alias can never outrank a better name match.
+            var bestScore = FuzzyMatch.score(query: q, candidate: app.name)
+            for candidate in app.matchAliases {
+                guard let aliasScore = FuzzyMatch.score(query: q, candidate: candidate) else { continue }
+                bestScore = max(bestScore ?? aliasScore, aliasScore)
+            }
+            guard let score = bestScore else { return nil }
             return (app, score + (learned[app.preferenceKey] ?? 0))
         }
         return

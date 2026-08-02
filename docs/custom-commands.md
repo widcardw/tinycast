@@ -1,8 +1,14 @@
 # Custom commands
 
 Custom commands let users add a searchable name and a shell command in **Settings → Custom
-Commands**. They appear in the launcher's Commands section, share the normal fuzzy ranking, and run
-from Return, a favorite slot, or an optional global shortcut.
+Commands**. They appear in the launcher's Custom Commands section, share the normal fuzzy ranking,
+and run from Return, a favorite slot, or an optional global shortcut.
+
+The pane carries the feature switch — off out of the box — and its launcher-visibility companion,
+both in `AppSettings` and in settings backups. Switching the feature off empties the launcher section and makes
+`AppCore.runCustomCommand` — the single funnel for palette activation and global shortcuts — refuse to
+run anything; Carbon registrations and their bindings stay put, so re-enabling restores every shortcut
+without re-registering. "Show in launcher" only hides the section; shortcuts keep working.
 
 ## Ownership and persistence
 
@@ -19,9 +25,9 @@ executable content.
 ## Launcher integration
 
 `AppIndex` owns two slices: applications/System Settings discovered off-main and custom command
-entries supplied on the main actor. It publishes those followed by one alphabetized command slice
-containing both `CommandRegistry` and user commands. This keeps the visible row order identical to
-the flat palette selection while allowing edits to invalidate fuzzy results without rescanning disk.
+entries supplied on the main actor. It publishes the custom command slice ahead of the alphabetized
+`CommandRegistry` built-ins, each its own launcher section. This keeps the visible row order identical
+to the flat palette selection while allowing edits to invalidate fuzzy results without rescanning disk.
 
 The command text is deliberately not searchable. Only the user-facing name enters fuzzy matching.
 
@@ -34,7 +40,7 @@ The command text is deliberately not searchable. Only the user-facing name enter
 - the user's home directory as the working directory
 - standard input and output connected to `/dev/null`
 - `TINYCAST=1` added to the inherited environment
-- up to 8 KiB of standard error retained for a failure alert
+- up to 8 KiB of standard error retained for a failure dialog
 
 No Terminal window or pseudo-terminal is created. `waitUntilExit` blocks for the whole life of the
 command, so it runs on a private concurrent `DispatchQueue` rather than a cooperative-pool thread a
@@ -67,18 +73,20 @@ is dropped while the actual error survives.
 ### Needs confirmation
 
 `AppCore.runCustomCommand(id:)` is the one funnel both palette activation and the global hotkey reach,
-so the gate lives there and neither path can bypass it. The palette hides before the alert — it is a
-floating panel and would sit above it. The alert shows the command text as well as its name, and ↵ is
-bound to **Cancel**: the command is one ↵ away in the palette, and a reflexive second ↵ must not fire
-something the user asked to be warned about. `NSAlert.runModal` spins a nested run loop where Carbon
-hotkeys keep firing, so a re-entrancy flag stops a held shortcut stacking alerts.
+so the gate lives there and neither path can bypass it. The palette hides before the dialog it is a
+floating panel and would sit above it. The dialog shows the command text as well as its name; ↵ runs
+it and Escape cancels, with Cancel rendered on the left of the two buttons. It carries the `terminal`
+glyph the command's launcher row uses, and reads neutral rather than destructive — running a command the
+user wrote themselves wants a deliberate second tap, not a red alarm. The gate is Tinycast's own
+dialog, not an `NSAlert` ([ui.md](ui.md#dialogs--hud)): presentation is `async` with no nested run loop,
+and the presenter itself refuses a second dialog while one is up, so a held shortcut can't stack them.
 
 ### Reporting
 
 Tinycast dismisses an open palette before starting a custom command. A zero exit status is silent; a
-launch failure or non-zero status activates Tinycast and shows the bounded error detail. When the
-status is 127 and **Load shell environment** is off, the alert adds a one-line hint and an **Open
-Settings…** button that lands on the Custom Commands pane — the hint is gated on the status alone, not
+launch failure or non-zero status opens a Tinycast dialog with the bounded error detail. When the
+status is 127 and **Load shell environment** is off, the dialog adds a one-line hint and an **Open
+Settings…** button that lands on the Commands pane — the hint is gated on the status alone, not
 on grepping stderr, since 127 is equally a plain typo. The command string itself is never logged.
 
 ### Manual checks
@@ -86,8 +94,8 @@ on grepping stderr, since 127 is equally a plain typo. The command string itself
 `requiresConfirmation` lives in `AppCore` (AppKit, `@MainActor`) and so is out of reach of the
 Foundation-only harness. Verify by hand:
 
-1. Activating a gated command from the palette hides the palette *before* the alert appears.
-2. ↵ at the alert cancels; clicking **Run** runs.
-3. Pressing the command's hotkey while its alert is up does not stack a second alert.
+1. Activating a gated command from the palette hides the palette *before* the dialog appears.
+2. ↵ at the dialog runs the command; Escape or clicking **Cancel** cancels.
+3. Pressing the command's hotkey while its dialog is up does not stack a second dialog.
 4. A gated command triggered by hotkey with no palette open still confirms.
 5. An rc-file-only alias with the flag off shows the 127 hint, and **Open Settings…** opens the pane.

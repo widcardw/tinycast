@@ -22,10 +22,8 @@ struct RootPaletteView: View {
     @State private var selectionIsRunning = false
     /// Highlighted row of whichever popover menu is open; reset to the first row on open, moved by ↑/↓ and hover, activated by ↵/click.
     @State private var menuSelection = 0
-    /// Bumped only when the selection should pull the scroll view with it (keyboard nav, list resets); mouse selection targets a visible row, so it leaves this and the list put.
-    @State private var scrollToken = UUID()
-    /// The emoji grid's scroll request — the lazy grid needs distinct reset/follow scroll ops, unlike the 1-D lists that recenter fine on `scrollToken`.
-    @State private var emojiScroll = EmojiScrollIntent(kind: .top)
+    /// The pending scroll request for whichever list or grid is mounted (modes are exclusive, so one piece of state serves all of them). Set only by keyboard nav and resets; mouse selection targets a visible row, so it leaves this and the scroll position put.
+    @State private var scroll = ScrollIntent(kind: .top)
 
     private var isQueryEmpty: Bool { vm.query.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -155,7 +153,7 @@ struct RootPaletteView: View {
             },
             PopoverMenuItem(title: "Settings", systemImage: "gearshape", shortcut: "⌘,") {
                 core.showSettings()
-            },
+            }
         ])
     }
 
@@ -251,19 +249,16 @@ struct RootPaletteView: View {
         }
         .onChange(of: vm.query) {
             vm.selection = 0
-            scrollToken = UUID()
-            emojiScroll = EmojiScrollIntent(kind: .top)
+            scroll = ScrollIntent(kind: .top)
         }
         .onChange(of: vm.mode) {
             vm.selection = 0
             showActions = false
-            scrollToken = UUID()
-            emojiScroll = EmojiScrollIntent(kind: .top)
+            scroll = ScrollIntent(kind: .top)
         }
-        // Pop-to-root: `prepare` clears query/selection, but if both were already at their defaults the handlers above never fire — this token guarantees the scroll itself snaps back to the top.
+        // Pop-to-root: `prepare` clears query/selection, but if both were already at their defaults the handlers above never fire — this intent guarantees the scroll itself snaps back to the origin.
         .onChange(of: vm.resetToken) {
-            scrollToken = UUID()
-            emojiScroll = EmojiScrollIntent(kind: .top)
+            scroll = ScrollIntent(kind: .top)
         }
         // Opening either menu highlights its first row and closes the other, so exactly one menu is ever open and always has a highlight.
         .onChange(of: showActions) {
@@ -285,11 +280,10 @@ struct RootPaletteView: View {
             // A nil `old.id` is the first load landing, not a row that moved.
             guard vm.mode == .clipboard, old.id != nil else { return }
             if isQueryEmpty, old.id != new.id, let id = new.id,
-                let index = clips.firstIndex(where: { $0.id == id })
-            {
+                let index = clips.firstIndex(where: { $0.id == id }) {
                 vm.selection = index
             }
-            scrollToken = UUID()
+            scroll = ScrollIntent(kind: .follow)
         }
         .onAppear { searchFocused = true }
         // Typing/clearing/overflow/settings all flip `paletteIsCollapsed`; resize the window to match.
@@ -511,7 +505,7 @@ struct RootPaletteView: View {
                 selectedID: calcSelected ? nil : selectedID,
                 favoriteCount: favoriteCount,
                 showSections: showSections,
-                scrollToken: scrollToken,
+                scroll: scroll,
                 calc: calc,
                 calcSelected: calcSelected,
                 onActivateCalc: {
@@ -539,7 +533,7 @@ struct RootPaletteView: View {
                     ClipboardList(
                         results: clips,
                         selectedID: selected?.id,
-                        scrollToken: scrollToken,
+                        scroll: scroll,
                         onSelect: { item in vm.selection = clips.firstIndex(of: item) ?? 0 },
                         onActivate: activateSelection,
                         onActions: { item in
@@ -566,7 +560,7 @@ struct RootPaletteView: View {
                 CalculatorHistoryList(
                     results: hist,
                     selectedID: calcSelected ? nil : selected?.id,
-                    scrollToken: scrollToken,
+                    scroll: scroll,
                     calc: calc,
                     calcSelected: calcSelected,
                     onActivateCalc: {
@@ -598,7 +592,7 @@ struct RootPaletteView: View {
                     sections: emojiSections,
                     selection: selection,
                     tone: settings.emojiSkinTone,
-                    scroll: emojiScroll,
+                    scroll: scroll,
                     onSelect: { vm.selection = $0 },
                     onActivate: activateSelection,
                     onActions: { flat in
@@ -667,6 +661,8 @@ struct RootPaletteView: View {
             switch selectedApp?.kind {
             case .systemSettings: return "Open System Setting"
             case .command: return "Run Command"
+            case .customCommand: return "Run Custom Command"
+            case .systemAction: return "Run System Action"
             default: return "Open Application"
             }
         }
@@ -722,8 +718,7 @@ struct RootPaletteView: View {
     private func move(_ delta: Int) {
         guard resultCount > 0 else { return }
         vm.selection = min(max(selection + delta, 0), resultCount - 1)
-        scrollToken = UUID()
-        emojiScroll = EmojiScrollIntent(kind: .follow)
+        scroll = ScrollIntent(kind: .follow)
     }
 
     /// Move the open menu's highlight, clamped at the ends (no wrap — consistent with `move`).
@@ -745,7 +740,7 @@ struct RootPaletteView: View {
             counts: emojiSections.map(\.entries.count), columns: EmojiGrid.columns)
         guard resultCount > 0 else { return }
         vm.selection = delta > 0 ? geometry.down(from: selection) : geometry.up(from: selection)
-        emojiScroll = EmojiScrollIntent(kind: .follow)
+        scroll = ScrollIntent(kind: .follow)
     }
 
     /// Tab flips launcher↔clipboard; Calculator History (entered via its command) exits back to the launcher rather than joining the cycle.

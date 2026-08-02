@@ -67,8 +67,6 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            SearchScopesCard()
-
             SettingsCard(header: "Hyper Key") {
                 SettingsRow(
                     title: "Hyper Key",

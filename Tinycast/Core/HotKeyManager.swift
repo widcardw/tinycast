@@ -7,6 +7,8 @@ final class HotKeyManager: ObservableObject {
     var onToggleClipboard: (() -> Void)?
     var onToggleEmoji: (() -> Void)?
     var onRunCustomCommand: ((UUID) -> Void)?
+    var onRunSystemAction: ((SystemAction.ID) -> Void)?
+    var onRunWindowCommand: ((WindowCommand.ID) -> Void)?
 
     /// The recorder currently capturing keystrokes, or `nil`; keeping this as plain app state makes recorders glitch-free, and any active recorder pauses Carbon so the typed combo can't fire a hotkey.
     @Published var recordingAction: HotKeyAction? {
@@ -31,6 +33,9 @@ final class HotKeyManager: ObservableObject {
         let live = Set(boundCustomCommandIDs).intersection(customCommandIDs)
         persistBoundCustomCommandIDs(live)
         for id in live { register(.customCommand(id: id)) }
+        // Fixed catalogs, so there's no index to maintain — `register` no-ops on an unbound item.
+        for id in SystemAction.ID.allCases { register(.systemAction(id: id)) }
+        for id in WindowCommand.ID.allCases { register(.windowCommand(id: id)) }
     }
 
     /// Bundle IDs that currently have a per-app hotkey — lets `start()` know which records to load and lets launcher rows show keycaps.
@@ -63,8 +68,7 @@ final class HotKeyManager: ObservableObject {
         objectWillChange.send()
         if let shortcut,
             let data = try? JSONEncoder().encode(shortcut),
-            let json = String(data: data, encoding: .utf8)
-        {
+            let json = String(data: data, encoding: .utf8) {
             UserDefaults.standard.set(json, forKey: action.defaultsKey)
             register(action)
         } else {
@@ -84,7 +88,7 @@ final class HotKeyManager: ObservableObject {
             var set = Set(boundCustomCommandIDs)
             if shortcut == nil { set.remove(id) } else { set.insert(id) }
             persistBoundCustomCommandIDs(set)
-        case .togglePalette, .toggleClipboard, .toggleEmoji:
+        case .togglePalette, .toggleClipboard, .toggleEmoji, .systemAction, .windowCommand:
             break
         }
     }
@@ -95,6 +99,8 @@ final class HotKeyManager: ObservableObject {
         candidates += boundBundleIDs.map { .app(bundleID: $0) }
         candidates += boundPaneBundleIDs.map { .settingsPane(bundleID: $0) }
         candidates += boundCustomCommandIDs.map { .customCommand(id: $0) }
+        candidates += SystemAction.ID.allCases.map { .systemAction(id: $0) }
+        candidates += WindowCommand.ID.allCases.map { .windowCommand(id: $0) }
         for candidate in candidates
         where candidate != action && self.shortcut(for: candidate) == shortcut {
             return displayName(of: candidate)
@@ -120,6 +126,10 @@ final class HotKeyManager: ObservableObject {
                 ?? bundleID
         case .customCommand(let id):
             return AppCore.shared.customCommands.command(id: id)?.name ?? "Custom Command"
+        case .systemAction(let id):
+            return SystemActionCatalog.action(id: id).name
+        case .windowCommand(let id):
+            return WindowCommandCatalog.command(id: id)?.name ?? "Window Command"
         }
     }
 
@@ -138,6 +148,8 @@ final class HotKeyManager: ObservableObject {
         case .app(let bundleID): AppLauncher.toggle(bundleID: bundleID)
         case .settingsPane(let bundleID): AppLauncher.openSettingsPane(bundleID: bundleID)
         case .customCommand(let id): onRunCustomCommand?(id)
+        case .systemAction(let id): onRunSystemAction?(id)
+        case .windowCommand(let id): onRunWindowCommand?(id)
         }
     }
 

@@ -41,7 +41,9 @@ Full detail: [`docs/architecture.md`](docs/architecture.md).
   accessory apps).
 - **Subsystems:** [palette](docs/palette.md) · [launcher & fuzzy match](docs/launcher.md) ·
   [calculator](docs/calculator.md) · [clipboard](docs/clipboard.md) · [emoji](docs/emoji.md) ·
-  [hotkeys](docs/hotkeys.md) · [UI & design system](docs/ui.md).
+  [snippets](docs/snippets.md) · [window management](docs/window-management.md) ·
+  [hotkeys](docs/hotkeys.md) · [Raycast import](docs/raycast-import.md) ·
+  [UI & design system](docs/ui.md).
 
 ## Critical Invariants
 
@@ -57,6 +59,10 @@ Never break these without an explicit task to do so.
 - **The flat `selection` index must match the visible row order exactly**, including the inline
   calculator card at index 0 when present. Selection is the single source of truth for highlight /
   activation.
+- **`AppEntry.Kind` is the only thing that says what an entry is.** One case per launcher section, per
+  `VisibilityStore` category and per Settings pane — never re-derive a category by sniffing an entry ID
+  (that's what `isCustomCommand` used to do). A new category means a new case, a slice in
+  `AppIndex.publishEntries()`, and the matching filter in `LauncherList.rows`, in that same order.
 - **While a footer menu is open the palette search field never resigns first responder** — input is
   frozen instead (resigning shifts the text a point or two). See [palette.md](docs/palette.md).
 - **Focus restoration is load-bearing.** Paste targets the recorded `previousApp` and requires the
@@ -73,7 +79,27 @@ Never break these without an explicit task to do so.
   `Core/CustomCommand.swift` and `Core/ShellCommandRunner.swift` must likewise stay free of AppKit /
   SwiftUI (Foundation plus Combine for `ObservableObject` and Darwin for `mkstemp`) so
   `Tools/custom-command-test.swift` can compile them standalone — which is why the custom-command
-  confirmation gate lives in `AppCore` and not in the runner.
+  confirmation gate lives in `AppCore` and not in the runner. All of `Core/Snippets/` compiles into
+  `Tools/snippets-test.swift` (the harness globs the directory), so the model, Markdown serializer,
+  template engine, repository and keyword policies stay Foundation-only, and the AppKit files there
+  keep their dependencies to what the harness can stub. `Core/SystemAction.swift` is also
+  Foundation-only for `Tools/system-action-test.swift`; platform effects belong in
+  `SystemActionRunner`, while confirmation and failure UI remain in `AppCore`.
+  `Core/VolumeLevel.swift` is the same split for `Tools/volume-test.swift` — the 5% step grid and the
+  percentage string are pure Foundation, CoreAudio lives in `SystemActionRunner` and observation in
+  `VolumeState`, so both the HUD and the Set Volume slider walk one tested grid. `Core/WindowManagement/`
+  splits the same way for `Tools/window-command-test.swift`: `WindowCommand.swift`, `WindowLayout.swift`
+  and `WindowActionMemory.swift` stay Foundation + CoreGraphics and pure (no AX, no `NSScreen`, no
+  clock — `WindowActionMemory` takes `now` as a parameter), while every `AXUIElement` call and the
+  Cocoa↔AX coordinate flip live in `WindowMover.swift`.
+- **`WindowLayout` works exclusively in AX space** — global coordinates, top-left origin, +Y **down**.
+  `WindowMover.AXGeometry` is the only place that converts, and it anchors the flip on the **primary**
+  display's height, never the window's own screen: doing otherwise shears every rect on a
+  differently-sized display by the height difference, which is invisible on one monitor and wrong on
+  every mixed-size setup. The visible consequence is that "Top Half" has `minY == visibleFrame.minY`;
+  `Tools/window-command-test.swift` asserts it. Nothing in this feature ever touches
+  `backingScaleFactor` — all three of `NSScreen.frame`, `visibleFrame` and AX coordinates are in points,
+  so mixed-DPI correctness is automatic. See [window-management.md](docs/window-management.md).
 - **`Tools/fuzz-test.swift` holds a COPY of `FuzzyMatch`** from `Core/AppIndex.swift`. Change the
   scoring in one, mirror it in the other, or the test is meaningless.
 - **`EmojiData.generated.swift` is emitted by `node Tools/gen-emoji.js` and
@@ -92,6 +118,23 @@ Never break these without an explicit task to do so.
   **cacheless** `URLSession` (`.ephemeral`, `urlCache = nil`), never `URLSession.shared` — a cacheable
   response would leave a second copy in the on-disk `URLCache` that opting out doesn't delete.
   `CurrencyRateStore` is the reference implementation — follow it rather than inventing a second shape.
+- **Snippets are channel-isolated and path-identified.** Persist them under
+  `~/Library/Application Support/<bundle-id>/Snippets/`; `StoredSnippet.ID` is the standardized source
+  path, and external rename is delete + create. The feature ships off and its enable switch doubles as
+  keyword-expansion consent: `snippetsEnabled` is excluded from settings backups, and Accessibility —
+  the only permission, since the listen-only tap needs nothing more — may be requested only from that
+  explicit Settings gesture, never from startup, callbacks, watchers or health checks.
+  See [snippets.md](docs/snippets.md).
+- **The two Raycast export formats share no mapper.** `RaycastFormat.detect` is the *only* branch
+  between them; `RaycastImportV1` and `RaycastImportV2` own their own decrypt and their own field
+  mapping, and neither is ever tried as a fallback for the other (that is what makes a wrong
+  passphrase report a wrong passphrase instead of "not a Raycast export"). They meet only at
+  `RaycastImport.Result`. `RaycastFormat.swift` and `RaycastV1Decoder.swift` stay Foundation +
+  CommonCrypto + Carbon so `Tools/raycast-test.swift` compiles them standalone, which is why the
+  decoder returns Raycast's own values and `RaycastImportV1` — not the decoder — validates them
+  against `PopToRootTimeout` / `EmojiSkinTone` / `HyperKeyPhysicalKey` / `KeyShortcut`. Never commit a
+  real `.rayconfig` as a fixture: the harness builds its own. See
+  [raycast-import.md](docs/raycast-import.md).
 - **Swift 6 language mode: data-race violations are hard errors.** Almost everything is `@MainActor`;
   cross-actor model types are `Sendable`; heavy / IO work (app scan, image decode) is pushed off-main
   via `Task.detached` / `nonisolated`. Keep that boundary. House idioms: `NotificationToken` (RAII) for
@@ -100,16 +143,54 @@ Never break these without an explicit task to do so.
 - **Clipboard writes stamp a private `internalType` marker** so the poller skips Tinycast's own writes.
 - **Hotkeys persist under legacy `KeyboardShortcuts_<name>` UserDefaults keys** (from the removed
   KeyboardShortcuts package) so old bindings survive. See [hotkeys.md](docs/hotkeys.md).
+- **Tinycast presents its own dialogs, never `NSAlert` / `NSSlider` / system popovers.** Every
+  confirmation, failure report and value prompt goes through `DialogController` (`Core/Dialog/`,
+  owned by `AppCore`; reachable elsewhere via `AppCore.showNotice` / `confirm`). Presentation is
+  `async`, so there is no nested run loop, and the presenter refuses a second dialog while one is up
+  — that, not a flag, is what stops a held hotkey stacking dialogs. **↵ runs the primary action,
+  Escape cancels, and Cancel always renders leading** (the left button), matching macOS convention.
+- **A dialog has three independent axes; never let one infer another.** The **icon**
+  (`DialogRequest.symbol`, required) is always the *subject's* own glyph — the command being
+  confirmed uses its `SystemAction.sfSymbol`, so the Restart dialog shows the same icon as the
+  Restart row. Tone never picks an icon. The **tone** (`DialogTone`: `.neutral` / `.success` /
+  `.danger`) tints only that glyph. The **button** takes its color from `DialogAction.Role`
+  (`.standard` white / `.destructive` red / `.cancel` secondary), so a red-glyph security warning can
+  still carry a plain white button — as "Import executable commands?" does. Resolve every glyph
+  through `SymbolImage`, not `Image(systemName:)`: some catalog symbols are bundled assets
+  (`toggleBluetooth`). A button never prints its key cap; hovering it shows a `Tooltip`
+  (`Core/Tooltip.swift`) instead, styled like the palette's own keycap chips.
+- **A transient readout is a HUD, not a dialog.** `VolumeHUDController`'s box is volume/mute only,
+  since that one needs an actual level and number; every other success/info confirmation (system
+  commands, Custom Commands, Snippets) goes through `MessageHUDController`'s pill, whose trailing
+  glyph *is* its `DialogTone` — a pill has no subject to name, so the dialogs' icon rule doesn't
+  apply, and the mapping stays file-scoped so nothing can reach for it when building a
+  `DialogRequest`. Both are driven by `HUDPresenter`, which owns the one-at-a-time / auto-dismiss /
+  fade policy; a new HUD means a new presenter, not a second shape bolted onto an existing
+  controller. See [ui.md](docs/ui.md#dialogs--hud).
+- **Glass is for controls; content takes the panel recipe.** `glassEffect` needs a backdrop to lens,
+  so it only works *inside* a window that already has a `VisualEffectView` — the action capsule, the
+  menu circle, `PopoverMenu`, a dialog's buttons. On a bare borderless panel it falls back to an
+  opaque backing and shows as a dark edge. Both HUDs therefore use `black panelDimming` →
+  `VisualEffectView()` → `clipShape`, exactly like a dialog.
 - **Read [`docs/ui.md`](docs/ui.md) before any restyle or new view.** `Core/Theme.swift` is the single
   design-token source.
+- **`Core/EdgeDissolve.swift` and `Core/ThinScrollbar.swift` are off-limits.** Both are tuned by eye
+  against the palette's floating bars, so any edit is a visual regression. Do not touch them to fix a
+  scroll bug, and never as a side effect of a restyle or refactor — needing to is the signal that the
+  real fix belongs elsewhere (a scroll target, an inset, an intent). Edit either one only under an
+  explicit task to change that look.
 
 ## Project Layout
 
 - `Tinycast/Core/` — managers, stores, windows, AppKit glue (no view bodies beyond hosting).
-  `Core/Calculator/` and `Core/Emoji/` are the Foundation-only engines; `Core/Theme.swift` the design
-  tokens; `Core/HotKey/` the in-house hotkey stack.
+  `Core/Calculator/` and `Core/Emoji/` are Foundation-only engines; `Core/Snippets/` is a
+  standalone-harness input in full; `Core/WindowManagement/` is a pure geometry layer plus its one AX
+  file; `Core/Theme.swift` is the design-token source; `Core/HotKey/` is the in-house hotkey stack.
 - `Tinycast/Features/` — SwiftUI views: `RootPaletteView`, `Launcher/`, `Clipboard/`, `Calculator/`,
-  `Emoji/`, `Settings/`, `About/`, `Onboarding/`, plus shared `PopoverMenu`.
+  `Emoji/`, `Settings/`, `About/`, `Onboarding/`, plus shared `PopoverMenu`. Each `SettingsTab` maps to
+  one `…SettingsView` built on the `SettingsPane` / `SettingsCard` scaffold in `SettingsComponents.swift`;
+  the four launcher-category panes (Applications, System Settings, System Actions, Commands) are thin
+  wrappers over the shared `LauncherItemsCard`.
 - `Tinycast/App/` — `@main` app + delegate.
 - `Tools/` — standalone test harnesses and the emoji generator.
 - `.github/workflows/release.yml` — the entire release pipeline (see `docs/development.md`).
@@ -120,6 +201,8 @@ Never break these without an explicit task to do so.
 - [`docs/palette.md`](docs/palette.md) — palette state flow, menu-open freeze, focus restoration.
 - [`docs/launcher.md`](docs/launcher.md) · [`docs/calculator.md`](docs/calculator.md) ·
   [`docs/clipboard.md`](docs/clipboard.md) · [`docs/emoji.md`](docs/emoji.md) ·
+  [`docs/snippets.md`](docs/snippets.md) ·
+  [`docs/window-management.md`](docs/window-management.md) ·
   [`docs/hotkeys.md`](docs/hotkeys.md) — subsystem internals.
 - [`docs/ui.md`](docs/ui.md) — the full visual design system, tokens, scrollbars, section headers.
 - [`docs/development.md`](docs/development.md) — build, test, package, release.

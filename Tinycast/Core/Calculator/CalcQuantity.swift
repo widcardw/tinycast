@@ -56,8 +56,7 @@ enum CalcQuantity {
             // answer stays in the units the user wrote, so `2 * 5kg` is `10 kg`, not `22.05 lb`.
             if !preserveStandaloneUnit, parser.operationCount == 0, parser.dimensionCount == 1,
                 case .ident(let finalName)? = split.expressionTokens.last,
-                CalcUnits.byName[finalName] != nil
-            {
+                CalcUnits.byName[finalName] != nil {
                 return nil
             }
             guard parser.operationCount > 0 || preserveStandaloneUnit else { return nil }
@@ -213,8 +212,7 @@ enum CalcQuantity {
             // Money is written sign-first (`$10`), so echo the amount ahead of its code like every other quantity.
             if case .ident(let name) = tokens[index], CalcUnits.byName[name] == nil,
                 let definition = CalcCurrency.byName[name], index + 1 < tokens.count,
-                let amount = numberValue(tokens[index + 1])
-            {
+                let amount = numberValue(tokens[index + 1]) {
                 add(CalcFormatter.copyText(amount))
                 add(definition.code)
                 index += 2
@@ -330,21 +328,31 @@ private struct QuantityParser {
         return left
     }
 
-    private func peekBinary(
-        left: QuantityValue
-    ) -> (op: Character, bindingPower: Int, rightBindingPower: Int, consumesToken: Bool)? {
+    /// An operator, its binding power, the minimum bp for its right operand, and whether it has a token to consume.
+    struct BinaryOp {
+        let op: Character
+        let bindingPower: Int
+        let rightBindingPower: Int
+        let consumesToken: Bool
+    }
+
+    private func peekBinary(left: QuantityValue) -> BinaryOp? {
         switch current {
         case .op(let op) where op == "+" || op == "-":
-            return (op, 10, 11, true)
+            return BinaryOp(op: op, bindingPower: 10, rightBindingPower: 11, consumesToken: true)
         case .op(let op) where op == "*" || op == "/":
-            return (op, 20, 21, true)
+            return BinaryOp(op: op, bindingPower: 20, rightBindingPower: 21, consumesToken: true)
         case .ident("of"):
-            return ("*", 20, 21, true)
+            return BinaryOp(op: "*", bindingPower: 20, rightBindingPower: 21, consumesToken: true)
         case .op("^"):
-            return ("^", 30, 30, true)
+            return BinaryOp(op: "^", bindingPower: 30, rightBindingPower: 30, consumesToken: true)
         default:
+            // Juxtaposition against a bracket multiplies (`$5(2)`, `5(2)$`), matching the scalar parser.
+            if case .op("(") = current {
+                return BinaryOp(op: "*", bindingPower: 20, rightBindingPower: 21, consumesToken: false)
+            }
             if !isScalar(left.kind), startsQuantity(current) {
-                return ("+", 10, 11, false)
+                return BinaryOp(op: "+", bindingPower: 10, rightBindingPower: 11, consumesToken: false)
             }
             return nil
         }

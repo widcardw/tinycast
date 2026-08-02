@@ -16,7 +16,7 @@ final class PalettePanel: NSPanel {
     /// Keys that drive an open menu (navigate/activate/dismiss); they must reach SwiftUI's `onKeyPress` even while the menu freezes text editing.
     private static let menuNavKeys: Set<Int> = [
         kVK_UpArrow, kVK_DownArrow, kVK_LeftArrow, kVK_RightArrow,
-        kVK_Return, kVK_ANSI_KeypadEnter, kVK_Escape, kVK_Tab,
+        kVK_Return, kVK_ANSI_KeypadEnter, kVK_Escape, kVK_Tab
     ]
 
     /// Hide/show the caret on SwiftUI's *own* live field editor (the current first responder) without replacing it — SwiftUI force-casts the field editor to a private subclass, so vending our own crashes; we can only tune the existing one. The field never resigns first responder, so its text/placeholder never reflows.
@@ -36,16 +36,14 @@ final class PalettePanel: NSPanel {
         // A footer menu owns the keyboard: the search field stays first responder (no focus swap, so nothing reflows) with only its caret hidden; swallow text-editing keystrokes before the field editor consumes them, but let shortcut chords (⌘K, ⌘⌫) and menu-nav keys reach SwiftUI's onKeyPress.
         if event.type == .keyDown,
             paletteViewModel?.menuOpen == true,
-            event.modifierFlags.intersection([.command, .control]).isEmpty,
-            !Self.menuNavKeys.contains(Int(event.keyCode))
-        {
+            event.modifierFlags.isDisjoint(with: [.command, .control]),
+            !Self.menuNavKeys.contains(Int(event.keyCode)) {
             return
         }
         if event.type == .keyDown,
             Int(event.keyCode) == kVK_Delete,
-            event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
-            onBareBackspace?() == true
-        {
+            event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift]),
+            onBareBackspace?() == true {
             return
         }
         super.sendEvent(event)

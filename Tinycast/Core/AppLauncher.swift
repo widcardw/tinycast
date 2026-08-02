@@ -29,8 +29,7 @@ enum AppLauncher {
             return
         }
         if let url = running?.bundleURL
-            ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
-        {
+            ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
             // Dock-click semantics: activates, raises, unhides, and reopens a window — none of which a bare `activate()` reliably does under cooperative activation (macOS 14+).
             NSWorkspace.shared.openApplication(
                 at: url, configuration: NSWorkspace.OpenConfiguration())

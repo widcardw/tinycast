@@ -61,8 +61,7 @@ final class PaletteWindowController: NSObject, NSWindowDelegate {
             core.palette.prepare(mode: .launcher)
             return
         }
-        popToRootTimer = Timer.scheduledTimer(withTimeInterval: timeout.interval, repeats: false) {
-            [weak self] _ in
+        popToRootTimer = Timer.scheduledTimer(withTimeInterval: timeout.interval, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.popToRootTimer = nil
                 self?.core.palette.prepare(mode: .launcher)

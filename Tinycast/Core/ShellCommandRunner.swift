@@ -34,8 +34,8 @@ enum ShellCommandRunner {
         process.arguments = [loadingShellEnvironment ? "-ilc" : "-lc", command]
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
         // Lets a shell config skip slow or interactive sections when Tinycast is the caller: `[[ -n $TINYCAST ]] && return`.
-        process.environment = ProcessInfo.processInfo.environment.merging(["TINYCAST": "1"]) {
-            _, new in new
+        process.environment = ProcessInfo.processInfo.environment.merging(["TINYCAST": "1"]) { _, new in
+            new
         }
         // Load-bearing for the interactive shell: a config that prompts reads EOF and moves on instead of hanging forever.
         process.standardInput = FileHandle.nullDevice

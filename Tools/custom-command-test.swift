@@ -73,12 +73,13 @@ struct CustomCommandTests {
         store.replace(with: [
             CustomCommand(
                 name: "Imported", command: "/usr/bin/true", loadsShellEnvironment: true,
-                requiresConfirmation: true)
+                requiresConfirmation: true, showsConfirmation: true)
         ])
         check(
-            "import preserves both flags",
+            "import preserves every flag",
             store.commands.first?.loadsShellEnvironment == true
-                && store.commands.first?.requiresConfirmation == true)
+                && store.commands.first?.requiresConfirmation == true
+                && store.commands.first?.showsConfirmation == true)
 
         // MARK: Runner
 

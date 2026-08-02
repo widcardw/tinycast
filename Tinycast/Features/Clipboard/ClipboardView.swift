@@ -4,8 +4,8 @@ import SwiftUI
 struct ClipboardList: View {
     let results: [ClipboardItem]
     let selectedID: ClipboardItem.ID?
-    /// Changes only when the list should scroll to follow the selection (keyboard nav / reset), so mouse selection never yanks the scroll position.
-    let scrollToken: UUID
+    /// Changes only when the list should scroll (keyboard nav / reset), so mouse selection never yanks the scroll position.
+    let scroll: ScrollIntent
     let onSelect: (ClipboardItem) -> Void
     let onActivate: () -> Void
     let onActions: (ClipboardItem) -> Void
@@ -20,6 +20,11 @@ struct ClipboardList: View {
             case .item(let item): return item.id.uuidString
             }
         }
+    }
+
+    /// Whether the selection sits on flat index 0, whose section header should stay visible.
+    private var firstRowSelected: Bool {
+        selectedID != nil && selectedID == results.first?.id
     }
 
     /// Pinned entries come first from the store and share one "Pinned" header; the rest are newest-first, so grouping walks and emits a date header whenever the bucket changes — mirrors the launcher's sectioning.
@@ -68,11 +73,22 @@ struct ClipboardList: View {
                 .padding(.top, Theme.Spacing.xs)
                 .padding(.bottom, Theme.Spacing.md)
                 .hideNativeScrollers()
+                .scrollOriginAnchor()
             }
             .edgeDissolve()
             .thinScrollbar()
-            .onChange(of: scrollToken) {
-                if let selectedID { proxy.scrollTo(selectedID.uuidString, anchor: .center) }
+            .onChange(of: scroll) { _, scroll in
+                switch scroll.kind {
+                case .top:
+                    proxy.scrollToOrigin()
+                case .follow:
+                    // On the first row, snap to the origin so its section header shows too — a nil anchor won't, since the row is already visible.
+                    if firstRowSelected {
+                        proxy.scrollToOrigin()
+                    } else if let selectedID {
+                        proxy.reveal(selectedID.uuidString)
+                    }
+                }
             }
         }
     }
@@ -127,7 +143,7 @@ enum ClipboardActionsMenu {
                 title: "Paste & Keep Window Open", icon: .paste(target, fallback: "macwindow")
             ) {
                 core.pasteKeepingWindowOpen(item)
-            },
+            }
         ]
         if item.isPinned {
             items.append(
@@ -309,8 +325,7 @@ struct ClipboardPreview: View {
                     .overlayScroller()
             }
         case .image:
-            AsyncThumbnail(url: store.imageURL(for: item), maxPixel: Self.previewMaxPixel) {
-                image in
+            AsyncThumbnail(url: store.imageURL(for: item), maxPixel: Self.previewMaxPixel) { image in
                 image
                     .resizable()
                     .aspectRatio(contentMode: .fit)

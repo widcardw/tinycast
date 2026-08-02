@@ -29,6 +29,8 @@ CPU churn. Just SwiftUI + AppKit with zero dependencies. It's fast because there
 - **Custom commands** — run named shell commands through fuzzy search or their own global hotkeys.
 - **Calculator** — do math, unit and live currency conversions inline, right in the palette.
 - **Clipboard history** — text and images, searchable, pasted back into the app you were using.
+- **Snippets** — reusable Markdown templates with dynamic placeholders, arguments, nested references
+  and optional keyword expansion.
 - **Global hotkey** — one shortcut summons the palette from anywhere.
 - **Per-app hotkeys** — bind a key to an app; press it to toggle (focus/hide).
 
@@ -51,9 +53,10 @@ directly from Releases instead, clear it once: `xattr -dr com.apple.quarantine
 
 ## Permissions
 
-**Accessibility** — needed only so Tinycast can paste a clipboard item back into the app you
-came from. You're prompted the first time you paste; grant it in **System Settings → Privacy &
-Security → Accessibility**.
+**Accessibility** — needed when Tinycast pastes or expands text into another app, and the only
+permission snippet keyword expansion needs. You're prompted when you first use a feature that needs
+it; grant access in **System Settings → Privacy & Security → Accessibility**. Snippets ship
+disabled, and keystrokes are matched locally, never stored and never sent anywhere.
 
 ## Using it
 
@@ -61,6 +64,7 @@ Security → Accessibility**.
 2. Press it anywhere → the palette floats in. Type to filter, **↵** to launch.
 3. **Tab** switches between Apps and Clipboard; **↑/↓** move, **Esc** dismisses.
 4. **Settings → Shortcuts** — search an app or custom command and record a global shortcut.
+5. **Settings → Snippets** — enable the feature, then create templates with expansion keywords.
 
 ## Building from source
 
@@ -81,18 +85,6 @@ in the **[pull request template](.github/PULL_REQUEST_TEMPLATE.md)**. Security i
 [SECURITY.md](SECURITY.md), not the issue tracker.
 
 Questions, ideas, or just want to follow along? **[Join the Discord](https://discord.gg/v2Eeb4QQy3)**.
-
-## Contributors
-
-Thank you to everyone who has put time into Tinycast — every fix and idea shows up in something
-people use every day.
-
-<p align="center">
-  <a href="https://github.com/abue-ammar/tinycast/graphs/contributors">
-    <img alt="Tinycast contributors"
-         src="https://contrib.rocks/image?repo=abue-ammar/tinycast&max=28&columns=28">
-  </a>
-</p>
 
 ## License
 

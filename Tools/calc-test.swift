@@ -15,6 +15,9 @@ struct CalcTests {
         expectDisplay("100/4", "25")
         expectDisplay("2^10", "1,024")
         expectDisplay("2^3^2", "512")  // right-associative
+        expectDisplay("2**2", "4")  // "**" is an alias for "^" (Python/JS/shell spelling)
+        expectDisplay("2**10", "1,024")
+        expectDisplay("2**3**2", "512")  // right-associative, same as "^"
         expectDisplay("(5+2)*3", "21")
         expectDisplay("5!", "120")
         expectDisplay("3!!", "720")  // (3!)! — chained postfix
@@ -32,6 +35,23 @@ struct CalcTests {
         expectDisplay("10k + 500", "10,500")
         expectDisplay("10k * 2", "20,000")
         expectBadges("10k", source: "Expression", target: "Result")
+
+        // Scientific notation input
+        expectDisplay("1e6 + 1", "1,000,001")
+        expectDisplay("1.5e-3 * 2", "0.003")
+        expectDisplay("2.5e8 / 2", "125,000,000")
+        expectDisplay("1E6 + 1", "1,000,001")  // uppercase E
+        expectDisplay("1e6", "1,000,000")  // a lone shorthand literal cards like "10k"
+        expectNil("10em")  // partial "e" isn't an exponent, so the ident scanner still gets it
+        expectDisplay("1e3k + 1", "1,000,001")  // exponent then compact suffix, both applied
+
+        // Exact up to 2^53, past the old 1e15 cutoff — truncating these lost real digits on copy
+        expectDisplay("2^49", "562,949,953,421,312")
+        expectDisplay("2^50", "1,125,899,906,842,624")
+        expectCopy("2^50", "1125899906842624")
+        expectDisplay("999999999999999 + 1", "1,000,000,000,000,000")  // exactly the old cutoff
+        // Beyond 2^53 the precision is genuinely gone, so exponent form is the honest answer
+        expectDisplay("123456789 * 123456789", "1.524157875e+16")
 
         // Functions
         expectDisplay("sqrt(64)", "8")
@@ -54,11 +74,50 @@ struct CalcTests {
         expectDisplay("π*2", "6.283185307")
         expectDisplay("e^2", "7.389056099")
 
+        // Implicit multiplication
+        expectDisplay("4(2+3)", "20")
+        expectDisplay("(2+3)(2+3)", "25")
+        expectDisplay("2pi", "6.283185307")
+        expectDisplay("2π", "6.283185307")
+        expectDisplay("2sqrt(9)", "6")
+        expectDisplay("2(3+1)+1", "9")  // implicit "*" binds like explicit "*", not looser
+        expectDisplay("10π ^e", "224.5915772")  // and looser than "^"
+        // Units are never mistaken for a constant/function, so this stays untouched
+        expectDisplay("10km to mi", "6.213711922 mi")
+        // Juxtaposition against a bracket carries the unit through, matching explicit "*"
+        expectDisplay("2(3)kg", "6 kg")
+        expectDisplay("2*(3)kg", "6 kg")
+
+        // Scientific notation — only when the exponent hugs the mantissa
+        expectDisplay("1e5", "100,000")
+        expectDisplay("2e10", "20,000,000,000")
+        expectDisplay("1E5", "100,000")
+        expectDisplay("1.5e3", "1,500")
+        expectDisplay("3e+2", "300")
+        expectCopy("1e-5", "1e-05")
+        expectDisplay("2e10/2", "10,000,000,000")
+        expectDisplay("1e5 to hex", "0x186A0")
+        expectDisplay("5e-3km", "0.003106855961 mi")
+        expectDisplay("2e", "5.436563657")  // no digits after "e" — still 2 × Euler's e
+        expectDisplay("1 e", "2.718281828")  // detached — never an exponent
+        expectNil("1e400")  // overflows to infinity, so not calculator input
+        expectNil("1e5e5")
+
         // Percent
         expectDisplay("20% of 450", "90")
         expectDisplay("450 + 20%", "540")
         expectDisplay("450 - 15%", "382.5")
         expectDisplay("20%", "0.2")
+
+        // Modulo — spelled out, so it never competes with the percent cases above
+        expectDisplay("10 mod 3", "1")
+        expectDisplay("17 mod 5", "2")
+        expectDisplay("10k mod 3", "1")
+        expectDisplay("-10 mod 3", "-1")  // fmod semantics: the sign follows the dividend
+        expectDisplay("2 + 10 mod 3", "3")  // same precedence as * and /, binds tighter than +
+        expectNil("10 mod 0")
+        expectNil("10 % 3")  // "%" stays percent, whatever follows it
+        expectDisplay("450 + 20% - 5", "535")
 
         // Unit conversion — length / weight / temperature / time / area / volume / storage
         expectDisplay("10km to mi", "6.213711922 mi")
@@ -359,6 +418,20 @@ struct CalcTests {
         expectDisplay("100 mbps to kbps", "100,000 Kbps")
         expectBadges("100 kmh to mph", source: "Kilometers per Hour", target: "Miles per Hour")
 
+        // Bare-unit auto-conversion coverage gaps: bar/psi/atm/Mbps/Gbps/Kbps had it, their
+        // neighbors didn't — same category, same treatment.
+        expectDisplay("5 mbar", "0.07251886887 psi")
+        expectDisplay("5 kPa", "0.7251886887 psi")
+        expectDisplay("5 hPa", "0.07251886887 psi")
+        expectDisplay("5 mmHg", "0.0966838873 psi")
+        expectDisplay("5 Torr", "0.09668387352 psi")
+        expectDisplay("100 bps", "0.1 Kbps")
+        expectDisplay("1 Tbps", "1,000 Gbps")
+
+        // Base conversion accepts an expression on the value side, like unit conversion already does
+        expectDisplay("2*128 to hex", "0x100")
+        expectDisplay("10*5 to hex", "0x32")
+
         // Percentage phrasings
         expectDisplay("20% off 500", "400")
         expectDisplay("50 as % of 200", "25%")
@@ -476,6 +549,12 @@ struct CalcTests {
         expectDisplay("($10 + $5) to eur", "13.80 EUR")
         expectDisplay("$10 +", "10.00 USD")
         expectBadges("$10 +", source: "Expression", target: "US Dollar")
+        // Juxtaposition multiplies on either side of the amount, same as an explicit "*"
+        expectDisplay("$5(2)", "10.00 USD")
+        expectDisplay("5(2)$", "10.00 USD")
+        expectDisplay("$5(2) to eur", "9.20 EUR")
+        expectNilWithoutConsent("$5(2)")
+        expectNilWithoutConsent("5(2)$")
         expectError("$10 + 5kg", "Cannot add Currency and Weight.")
         expectErrorWithoutRates(
             "$10 + $5", "Exchange rates unavailable — check your connection.")

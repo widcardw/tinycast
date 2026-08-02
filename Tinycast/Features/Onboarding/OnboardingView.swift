@@ -156,7 +156,7 @@ struct OnboardingView: View {
                 SettingsRow(
                     title: "Accessibility",
                     subtitle:
-                        "Without it Tinycast can still copy, but it can't paste a clipboard or emoji item back into the app you were using.",
+                        "Allows pasting clipboard items and expanded snippets into active apps.",
                     systemImage: "accessibility", tint: .blue
                 ) {
                     statusBadge
@@ -171,8 +171,7 @@ struct OnboardingView: View {
             SettingsCard {
                 SettingsRow(
                     title: "Raycast Export",
-                    subtitle: model.file?.lastPathComponent
-                        ?? "Choose a .rayconfig file exported from Raycast.",
+                    subtitle: model.fileSubtitle,
                     systemImage: "doc.badge.gearshape", tint: .orange
                 ) {
                     Button("Choose…") { model.chooseFile() }.controlSize(.small)
@@ -189,7 +188,7 @@ struct OnboardingView: View {
                         .onSubmit { model.run() }
                 }
             }
-            RaycastImportSelection(selection: $model.selection)
+            RaycastImportSelection(selection: $model.selection, format: model.format)
                 .padding(.horizontal, Theme.Spacing.xs)
             if let status = model.status {
                 importStatus(status)
@@ -232,7 +231,7 @@ struct OnboardingView: View {
                         .foregroundStyle(.secondary)
                 }
                 if step == 2 && model.importing {
-                    Button(action: {}) {
+                    Button {} label: {
                         HStack(spacing: Theme.Spacing.sm) {
                             ProgressView().controlSize(.small)
                             Text("Importing…")
@@ -340,8 +339,7 @@ struct OnboardingView: View {
     private static let appIcon: NSImage = {
         if let name = Bundle.main.infoDictionary?["CFBundleIconFile"] as? String,
             let url = Bundle.main.url(forResource: name, withExtension: "icns"),
-            let image = NSImage(contentsOf: url)
-        {
+            let image = NSImage(contentsOf: url) {
             return image
         }
         return NSApp.applicationIconImage
@@ -361,16 +359,25 @@ final class OnboardingModel: ObservableObject {
     @Published var importing = false
     @Published var status: ImportStatus?
     @Published var selection: RaycastImportOptions = .all
+    @Published var format: RaycastFormat?
 
-    var canImport: Bool { file != nil && !passphrase.isEmpty && !selection.isEmpty && !importing }
+    var canImport: Bool { format != nil && !passphrase.isEmpty && !selection.isEmpty && !importing }
     var didImport: Bool {
         if case .success = status { return true }
         return false
     }
 
+    var fileSubtitle: String {
+        guard let name = file?.lastPathComponent else {
+            return "Choose a .rayconfig file exported from Raycast."
+        }
+        return "\(name) — \(format?.title ?? "not a Raycast export")"
+    }
+
     func chooseFile() {
         guard let url = BackupActions.pickRaycastFile() else { return }
         file = url
+        format = BackupActions.detectRaycastFormat(of: url)
         status = nil
     }
 

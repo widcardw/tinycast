@@ -127,7 +127,7 @@ enum CalcCurrency {
         "KRW": ["won"],  // 2
         "RON": ["leu", "lei"],  // 2
         "RUB": ["ruble", "rubles"],  // 2
-        "SAR": ["riyal", "riyals"],  // 2
+        "SAR": ["riyal", "riyals"]  // 2
     ]
 
     /// Lookup by lowercased ident. Codes, display names and uncontested nouns come from

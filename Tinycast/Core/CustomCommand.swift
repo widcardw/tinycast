@@ -3,6 +3,8 @@ import Foundation
 
 struct CustomCommand: Codable, Hashable, Identifiable, Sendable {
     static let entryIDPrefix = "custom-command:"
+    /// One glyph for every custom command — launcher row, Settings row and its dialogs, so they read as the same thing.
+    static let sfSymbol = "terminal"
 
     let id: UUID
     var name: String
@@ -10,16 +12,19 @@ struct CustomCommand: Codable, Hashable, Identifiable, Sendable {
     /// Sources the user's shell config so aliases, functions and `PATH` resolve; opt-in because a heavy `.zshrc` costs far more than the command itself.
     var loadsShellEnvironment: Bool
     var requiresConfirmation: Bool
+    var showsConfirmation: Bool
 
     init(
         id: UUID = UUID(), name: String, command: String,
-        loadsShellEnvironment: Bool = false, requiresConfirmation: Bool = false
+        loadsShellEnvironment: Bool = false, requiresConfirmation: Bool = false,
+        showsConfirmation: Bool = false
     ) {
         self.id = id
         self.name = name
         self.command = command
         self.loadsShellEnvironment = loadsShellEnvironment
         self.requiresConfirmation = requiresConfirmation
+        self.showsConfirmation = showsConfirmation
     }
 
     var entryID: String { Self.entryIDPrefix + id.uuidString.lowercased() }
