@@ -74,6 +74,50 @@
 | 2 | verify 失败——patch 烂了或 main 新增了 26-only API | 跑 `macos15-compat` skill 修复 |
 | 3 | preflight 失败（脏树 / 错分支 / tag 已存在 / 版本格式错） | 按报错修，重跑 |
 
+## 一键脚本：从上游拉最新并发布（fork 场景）
+
+上面的 `release.sh` 假设 `origin/main` 已经和上游同步，并且本机能跑需要 Xcode 26 的 `verify.sh`。
+我们的实际情况是两者都不满足，所以有第二个脚本：
+
+- 我们的 `origin` 是 fork（`widcardw/tinycast`），真正的新版本来自上游 `abue-ammar/tinycast` —— 发布前必须先把上游拉进 fork。
+- 本机是 **macOS 15.7.7 + Xcode 16**，`verify.sh` 要 `-target arm64-apple-macos26.0` 的 SDK 才能跑，本地跑必挂。完整验证只能靠远程 CI 的 "Verify macOS 15 compatibility" 步骤。
+
+`compat/sync-release.sh`（同样在 `compat/macos15` 分支上）把整条链做成一件事：
+
+```sh
+./compat/sync-release.sh                     # 同步 + 打 tag + 推 tag（版本自动取上游最新 stable）
+./compat/sync-release.sh --version 0.8.0-beta.35   # 指定版本（beta 就靠这个）
+./compat/sync-release.sh --dry-run           # 本地同步 + 全部检查，远程零改动
+./compat/sync-release.sh --retag             # 替换已存在的 -sequoia tag
+```
+
+它做了什么（对照 `release.sh` 的差异）：
+
+| 步骤 | `release.sh` | `sync-release.sh` |
+|---|---|---|
+| 拉取 | `fetch origin`（fork） | `fetch upstream` + `fetch origin` |
+| main 同步 | 不做，假定已同步 | `main` fast-forward 到 `upstream/main`（拒绝分叉，绝不硬 reset），并 `push origin main` |
+| compat 更新 | `merge origin/main` | `merge upstream/main` |
+| Tinycast/ 守卫 | ✅ 有 | ✅ 有（`upstream/main..HEAD` 下不得出现 `Tinycast/` 文件） |
+| patch 检查 | `verify.sh` 全量 | 本地只 `git apply --check`（Xcode 16 跑不了 verify），**完整验证交给远程 CI** |
+| 版本 | 最新 stable mainline tag | 同左；`--version` 可覆盖 |
+| tag / push | 同 | 同（push tag 触发 CI） |
+| 网络 | 普通 SSH | 依赖仓库级 `core.sshCommand`（见下） |
+
+### 网络前提（这台机器特有）
+
+`gh` 令牌缺 `workflow` scope，凡涉及 `.github/workflows/*` 变更的 push 会被 GitHub 拒绝；而 SSH key 认证没有 scope 限制，但本机 SSH:22 被网络拦。解法是 **SSH over 443（`ssh.github.com`）走本地 clash 代理**，已写入仓库级配置，脚本 preflight 会检查：
+
+```sh
+git config core.sshCommand 'ssh -o "HostName=ssh.github.com" -o "Port=443" -o "ProxyCommand=nc -X connect -x 127.0.0.1:7897 %h %p"'
+```
+
+（`7897` 是 Clash Verge 的 mixed-port，可从其配置里查。）脚本发现没配会报错并给出这一行。
+
+### 为什么本地不跑 verify 是安全的
+
+`sync-release.sh` 只保证"patch 还能应用、分支结构正确"，编译正确性由 CI 保证：`release-sequoia.yml` 在发布任何东西**之前**先跑 `./compat/verify.sh`（macos-26 runner + Xcode 26），verify 失败则整个 job 失败、不产生 release。所以本地少跑验证的代价只是"坏 tag 会浪费一次 CI 运行"，不会发布出坏包。
+
 ## 验证是怎么做的（verify.sh）
 
 `verify.sh` **永不碰工作区**：`git archive HEAD` 导出 tracked 文件到临时目录（顺带把未提交改动也 overlay 上去），在副本里打 patch 再构建。所以在任何分支、带未提交改动都能安全跑。
@@ -117,8 +161,11 @@
 # 发布（在 compat/macos15 分支上）
 ./compat/release.sh
 
+# fork 场景一键：上游出新版后，拉最新 + 同步 + 发布（本机推荐）
+./compat/sync-release.sh --version 0.8.0-beta.35
+
 # 只看不发布
-./compat/release.sh --dry-run
+./compat/sync-release.sh --dry-run
 
 # main 更新后重新同步
 git checkout compat/macos15 && git merge main && ./compat/verify.sh
@@ -147,8 +194,9 @@ git diff --stat origin/main..origin/compat/macos15   # 应只见 compat/ 与 wor
 
 ## 关键参考文件
 
-- `compat/release.sh` —— 本地 CLI 发布脚本（本文主线的实现）
-- `compat/verify.sh` —— 本地验证脚本
+- `compat/release.sh` —— 本地 CLI 发布脚本（假设 origin/main 已同步 + 本机能跑 verify）
+- `compat/sync-release.sh` —— **fork 一键脚本**：拉上游 → 同步 fork main → 更新 compat → 检查 patch → 打 tag 触发 CI（本机推荐入口）
+- `compat/verify.sh` —— 本地验证脚本（需要 Xcode 26，macOS 15 本机跑不了）
 - `compat/macos15.patch` —— 唯一的门控补丁（由 skill 生成，勿手改）
 - `compat/README.md` —— 分支上的英文操作参考（tap 语义、身份设计细节）
 - `.github/workflows/release-sequoia.yml` —— tag 触发的 CI 发布
